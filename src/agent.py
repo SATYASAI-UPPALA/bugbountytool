@@ -19,6 +19,8 @@ class AgentState(TypedDict):
     final: str | None
     iterations: int
     max_iterations: int
+    prompt_tokens: int
+    completion_tokens: int
 
 
 def call_model(state: AgentState) -> AgentState:
@@ -28,7 +30,7 @@ def call_model(state: AgentState) -> AgentState:
     skills_context = get_relevant_skills(state["objective"], state["history"])
     system_content = f"{SYSTEM_PROMPT}\n\n{skills_context}"
     
-    content = complete(
+    content, prompt_tokens, completion_tokens = complete(
         [
             {"role": "system", "content": system_content},
             {
@@ -41,7 +43,18 @@ def call_model(state: AgentState) -> AgentState:
         ]
     )
     decision = parse_decision(content)
-    return {**state, "decision": decision}
+    
+    import shutil
+    terminal_width = shutil.get_terminal_size().columns
+    token_msg = f"[Tokens | In: {prompt_tokens} Out: {completion_tokens}]"
+    print(f"{token_msg:>{terminal_width}}")
+    
+    return {
+        **state, 
+        "decision": decision, 
+        "prompt_tokens": state.get("prompt_tokens", 0) + prompt_tokens,
+        "completion_tokens": state.get("completion_tokens", 0) + completion_tokens
+    }
 
 
 def execute_command(state: AgentState) -> AgentState:
@@ -109,6 +122,8 @@ def run(objective: str, max_iterations: int = 6) -> str:
             "final": None,
             "iterations": 0,
             "max_iterations": max_iterations,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
         }
     )
     return result["final"] or ""
@@ -116,10 +131,25 @@ def run(objective: str, max_iterations: int = 6) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the LangGraph Kali agent.")
-    parser.add_argument("objective", help="Authorized security testing objective.")
+    parser.add_argument("objective", nargs="?", help="Authorized security testing objective.")
     parser.add_argument("--max-iterations", type=int, default=6)
     args = parser.parse_args()
-    print(run(args.objective, max_iterations=args.max_iterations))
+    
+    if args.objective:
+        print(run(args.objective, max_iterations=args.max_iterations))
+    else:
+        print("LangGraph Kali Agent Interactive Mode")
+        while True:
+            try:
+                objective = input("\nEnter objective (or 'exit' to quit): ")
+                if objective.strip().lower() in ['exit', 'quit']:
+                    break
+                if not objective.strip():
+                    continue
+                print(run(objective, max_iterations=args.max_iterations))
+            except (KeyboardInterrupt, EOFError):
+                print("\nExiting...")
+                break
 
 
 if __name__ == "__main__":

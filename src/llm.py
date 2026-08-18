@@ -8,7 +8,7 @@ from .config import settings
 client = OpenAI(base_url=settings.base_url, api_key=settings.api_key)
 
 
-def complete(messages: list[dict[str, str]]) -> str:
+def complete(messages: list[dict[str, str]]) -> tuple[str, int, int]:
     response = client.chat.completions.create(
         model=settings.model,
         messages=messages,
@@ -16,4 +16,7 @@ def complete(messages: list[dict[str, str]]) -> str:
         top_p=0.95,
     )
     message = response.choices[0].message
-    return message.content or ""
+    usage = response.usage
+    if usage:
+        return message.content or "", usage.prompt_tokens, usage.completion_tokens
+    return message.content or "", 0, 0
