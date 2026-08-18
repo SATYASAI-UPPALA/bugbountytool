@@ -49,6 +49,13 @@ def call_model(state: AgentState) -> AgentState:
     token_msg = f"[Tokens | In: {prompt_tokens} Out: {completion_tokens}]"
     print(f"{token_msg:>{terminal_width}}")
     
+    if decision.kind == "action":
+        if decision.reason:
+            print(f"\n[Agent Reasoning]: {decision.reason}")
+    elif decision.kind == "final":
+        if decision.final:
+            print(f"\n[Agent Final]: {decision.final}")
+    
     return {
         **state, 
         "decision": decision, 
@@ -63,10 +70,13 @@ def execute_command(state: AgentState) -> AgentState:
         return state
 
     try:
+        print(f"\n[Executing Tool]: {decision.command}")
         result = run_kali_command(decision.command)
         entry = result.format_for_model()
+        print(f"[Tool Output]:\n{entry}")
     except Exception as exc:
         entry = f"$ {decision.command}\nerror: {exc}"
+        print(f"[Tool Error]:\n{exc}")
 
     return {
         **state,
@@ -112,12 +122,15 @@ def build_graph():
     return graph.compile()
 
 
-def run(objective: str, max_iterations: int = 6) -> str:
+def run(objective: str, max_iterations: int = 6, history: list[str] = None) -> tuple[str, list[str], int, int]:
+    if history is None:
+        history = []
+    
     app = build_graph()
     result = app.invoke(
         {
             "objective": objective,
-            "history": [],
+            "history": history,
             "decision": None,
             "final": None,
             "iterations": 0,
@@ -126,7 +139,7 @@ def run(objective: str, max_iterations: int = 6) -> str:
             "completion_tokens": 0,
         }
     )
-    return result["final"] or ""
+    return result["final"] or "", result["history"], result.get("prompt_tokens", 0), result.get("completion_tokens", 0)
 
 
 def main() -> None:
@@ -136,21 +149,57 @@ def main() -> None:
     args = parser.parse_args()
     
     if args.objective:
-        print(run(args.objective, max_iterations=args.max_iterations))
+        final_msg, _, _, _ = run(args.objective, max_iterations=args.max_iterations)
+        print(final_msg)
     else:
         print("LangGraph Kali Agent Interactive Mode")
+        print("Commands: 'update' to git pull, 'clear' to clear history, 'history' to view history, 'exit' to quit.")
+        
+        from .config import settings
+        import shutil
+        
+        session_history = []
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        
         while True:
             try:
-                objective = input("\nEnter objective (or 'exit' to quit): ")
-                if objective.strip().lower() in ['exit', 'quit']:
-                    break
-                if not objective.strip():
+                terminal_width = shutil.get_terminal_size().columns
+                stats_str = f"[Model: {settings.model} | Total Tokens - In: {total_prompt_tokens} Out: {total_completion_tokens}]"
+                print(f"\n{stats_str:>{terminal_width}}")
+                
+                print("Enter objective or command:")
+                cmd = input("> ").strip()
+                cmd_lower = cmd.lower()
+                
+                if not cmd:
                     continue
-                print(run(objective, max_iterations=args.max_iterations))
+                elif cmd_lower in ['exit', 'quit']:
+                    break
+                elif cmd_lower == 'update':
+                    print("[System]: Updating tool via git pull...")
+                    import subprocess
+                    subprocess.run(["git", "pull"])
+                    continue
+                elif cmd_lower == 'clear':
+                    session_history = []
+                    print("[System]: Conversation history cleared.")
+                    continue
+                elif cmd_lower == 'history':
+                    print("[System]: Current Conversation History:")
+                    if not session_history:
+                        print("  (empty)")
+                    for idx, entry in enumerate(session_history):
+                        print(f"[{idx}] {entry}")
+                    continue
+                
+                final_msg, session_history, p_tokens, c_tokens = run(cmd, max_iterations=args.max_iterations, history=session_history)
+                total_prompt_tokens += p_tokens
+                total_completion_tokens += c_tokens
+                print(final_msg)
             except (KeyboardInterrupt, EOFError):
                 print("\nExiting...")
                 break
-
 
 if __name__ == "__main__":
     main()
